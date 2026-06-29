@@ -50,7 +50,7 @@ class MOSEKModelFreeInteracting():
             self.d_bd = d
             self.d_sd = d
         elif (d_bd is not None) and (d_sd is not None):
-            self.d = max(d_bd, d_me, d_sd)
+            self.d = max(d_bd, d_sd)
             self.d_bd = d_bd
             self.d_sd = d_sd
         else:
@@ -357,7 +357,7 @@ class MOSEKModelFreeInteracting():
                 continue
 
             # uniformly sample feasible point along t line
-            ts = rng.uniform(t_min, t_max)
+            ts = self.rng.uniform(t_min, t_max)
             y_feas_new = y_feas + ts * v
 
             # store
