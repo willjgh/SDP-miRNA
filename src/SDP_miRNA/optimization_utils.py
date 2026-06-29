@@ -223,7 +223,7 @@ def base_model(opt, model, OB_bounds):
 
     # helpful values
     Nd = utils.compute_Nd(opt.S, opt.d)
-    O = [i for i in range(S) if i not in U]
+    O = [i for i in range(opt.S) if i not in opt.U]
     SO = len(O)
 
     # variables
@@ -260,14 +260,14 @@ def base_model(opt, model, OB_bounds):
 
         # powers up to order d_bd for all species & observed species
         powers_S = utils.compute_powers(opt.S, opt.d_bd)
-        powers_SO = utilscompute_powers(opt.SO, opt.d_bd)
+        powers_SO = utils.compute_powers(SO, opt.d_bd)
 
         # for all species powers
         for i, alpha_S in enumerate(powers_S):
 
             # skip if contains unobserved species (non-zero power)
             unobserved = False
-            for j in U:
+            for j in opt.U:
                 if alpha_S[j] > 0:
                     unobserved = True
             if unobserved:
@@ -320,7 +320,7 @@ def base_model(opt, model, OB_bounds):
         for i, alpha in enumerate(powers):
 
             # for each unobserved species
-            for j in U:
+            for j in opt.U:
 
                 # if unobserved species has power >= 1
                 if alpha[j] > 1:
@@ -344,7 +344,7 @@ def base_model(opt, model, OB_bounds):
     model.addConstr(y[0] == 1, name="y0_base")
 
     # rate parameter constraints
-    for r, val in opt.rate_fSxed:
+    for r, val in opt.rate_fixed:
         model.addConstr(k[r] == val, name=f"k{r}_fSxed")
     for r, val in opt.rate_lower:
         model.addConstr(k[r] >= val, name=f"k{r}_lower")
@@ -471,7 +471,7 @@ def compute_feasible_correlation(opt, var_dict, Sx, Sy, MOSEK=False):
         return list(power)
 
     # find indices of moments
-    powers = compute_powers(opt.S, opt.d)
+    powers = utils.compute_powers(opt.S, opt.d)
     i_xy = powers.index(ei(Sx, Sy))
     i_x = powers.index(ei(Sx))
     i_y = powers.index(ei(Sy))
@@ -480,11 +480,11 @@ def compute_feasible_correlation(opt, var_dict, Sx, Sy, MOSEK=False):
 
     # collect moment values: MOSEK & GUROBI store with different keys
     if MOSEK:
-        E_xy = y[i_xy]
-        E_x  = y[i_x]
-        E_y  = y[i_y]
-        E_x2 = y[i_x2]
-        E_y2 = y[i_y2]
+        E_xy = var_dict[i_xy]
+        E_x  = var_dict[i_x]
+        E_y  = var_dict[i_y]
+        E_x2 = var_dict[i_x2]
+        E_y2 = var_dict[i_y2]
     else:
         E_xy = var_dict[f'y[{i_xy}]']
         E_x  = var_dict[f'y[{i_x}]']
@@ -504,7 +504,7 @@ def compute_feasible_correlation(opt, var_dict, Sx, Sy, MOSEK=False):
     # compute correlation
     correlation = cov_xy / (np.sqrt(var_x) * np.sqrt(var_y))
 
-    return correlation
+    return float(correlation)
 
 def compute_feasible_fano_factor(opt, var_dict, Sx, MOSEK=False):
     '''Compute correlation value given feasible moment vector.'''
@@ -517,14 +517,14 @@ def compute_feasible_fano_factor(opt, var_dict, Sx, MOSEK=False):
         return list(power)
 
     # find indices of moments
-    powers = compute_powers(opt.S, opt.d)
+    powers = utils.compute_powers(opt.S, opt.d)
     i_x = powers.index(ei(Sx))
     i_x2 = powers.index(ei(Sx, val=2))
 
     # collect moment values: MOSEK & GUROBI store with different keys
     if MOSEK:
-        E_x  = y[i_x]
-        E_x2 = y[i_x2]
+        E_x  = var_dict[i_x]
+        E_x2 = var_dict[i_x2]
     else:
         E_x  = var_dict[f'y[{i_x}]']
         E_x2 = var_dict[f'y[{i_x2}]']
@@ -539,7 +539,7 @@ def compute_feasible_fano_factor(opt, var_dict, Sx, MOSEK=False):
     # compute fano factor
     fano = var_x / E_x
 
-    return fano
+    return float(fano)
 
 # ------------------------------------------------
 # MOSEK helper functions
@@ -581,169 +581,3 @@ def compute_M_s_value(y, s, S, d):
             plus_index = powers_d.index(plus)
             M_s[alpha_index, beta_index] = y[plus_index]
     return M_s
-
-# ------------------------------------------------
-# Old code \/
-# ------------------------------------------------
-
-
-# ------------------------------------------------
-# Statistic computation
-# ------------------------------------------------
-
-def compute_feasible_correlation(opt, solution, feasible_values):
-    '''Compute correlation value at feasible point.'''
-
-    # only proceed if feasible point found
-    if not (solution['status'] == "OPTIMAL"):
-        return None
-    
-    # find indices of moments
-    powers = utils.compute_powers(opt.S, opt.d)
-    if opt.S == 4:
-        i_xy = powers.index([1, 1, 0, 0])
-        i_x  = powers.index([1, 0, 0, 0])
-        i_y  = powers.index([0, 1, 0, 0])
-        i_x2 = powers.index([2, 0, 0, 0])
-        i_y2 = powers.index([0, 2, 0, 0])
-    elif opt.S == 2:
-        i_xy = powers.index([1, 1])
-        i_x  = powers.index([1, 0])
-        i_y  = powers.index([0, 1])
-        i_x2 = powers.index([2, 0])
-        i_y2 = powers.index([0, 2])
-
-    # extract feasible point
-    var_dict = feasible_values[-1]
-
-    # collect moment values
-    E_xy = var_dict[f'y[{i_xy}]']
-    E_x  = var_dict[f'y[{i_x}]']
-    E_y  = var_dict[f'y[{i_y}]']
-    E_x2 = var_dict[f'y[{i_x2}]']
-    E_y2 = var_dict[f'y[{i_y2}]']
-
-    # compute statistics
-    cov_xy = E_xy - E_x*E_y
-    var_x = E_x2 - E_x**2
-    var_y = E_y2 - E_y**2
-
-    # return None if correlation undefined
-    if var_x <= 0 or var_y <= 0:
-        return None
-
-    # compute correlation
-    correlation = cov_xy / (np.sqrt(var_x) * np.sqrt(var_y))
-
-    return correlation
-
-def compute_feasible_fano_factors(opt, solution, feasible_values):
-    '''Compute fano factor values at feasible point.'''
-
-    # only proceed if feasible point found
-    if not (solution['status'] == "OPTIMAL"):
-        return None, None
-    
-    # find indices of moments
-    powers = utils.compute_powers(opt.S, opt.d)
-    if opt.S == 4:
-        i_x  = powers.index([1, 0, 0, 0])
-        i_y  = powers.index([0, 1, 0, 0])
-        i_x2 = powers.index([2, 0, 0, 0])
-        i_y2 = powers.index([0, 2, 0, 0])
-    elif opt.S == 2:
-        i_x  = powers.index([1, 0])
-        i_y  = powers.index([0, 1])
-        i_x2 = powers.index([2, 0])
-        i_y2 = powers.index([0, 2])
-
-    # extract feasible point
-    var_dict = feasible_values[-1]
-
-    # collect moment values
-    E_x  = var_dict[f'y[{i_x}]']
-    E_y  = var_dict[f'y[{i_y}]']
-    E_x2 = var_dict[f'y[{i_x2}]']
-    E_y2 = var_dict[f'y[{i_y2}]']
-
-    # compute statistics
-    var_x = E_x2 - E_x**2
-    var_y = E_y2 - E_y**2
-
-    # undefined for zero mean
-    if E_x == 0:
-        fano_1 = None
-    else:
-        fano_1 = var_x / E_x
-    if E_y == 0:
-        fano_2 = None
-    else:
-        fano_2 = var_y / E_y
-
-    return float(fano_1), float(fano_2)
-    
-
-
-def MOSEK_compute_feasible_correlation(S, d, y):
-    '''Compute correlation value at feasible point.'''
-
-    # find indices of moments
-    powers = utils.compute_powers(S, d)
-    i_xy = powers.index([1, 1])
-    i_x  = powers.index([1, 0])
-    i_y  = powers.index([0, 1])
-    i_x2 = powers.index([2, 0])
-    i_y2 = powers.index([0, 2])
-
-    # collect moment values
-    E_xy = y[i_xy]
-    E_x  = y[i_x]
-    E_y  = y[i_y]
-    E_x2 = y[i_x2]
-    E_y2 = y[i_y2]
-
-    # compute statistics
-    cov_xy = E_xy - E_x*E_y
-    var_x = E_x2 - E_x**2
-    var_y = E_y2 - E_y**2
-
-    # return None if correlation undefined
-    if var_x <= 0 or var_y <= 0:
-        return None
-
-    # compute correlation
-    correlation = cov_xy / (np.sqrt(var_x) * np.sqrt(var_y))
-
-    return float(correlation)
-
-def MOSEK_compute_feasible_fano_factors(S, d, y):
-    '''Compute fano factor values at feasible point.'''
-
-    # find indices of moments
-    powers = utils.compute_powers(S, d)
-    i_x  = powers.index([1, 0])
-    i_y  = powers.index([0, 1])
-    i_x2 = powers.index([2, 0])
-    i_y2 = powers.index([0, 2])
-
-    # collect moment values
-    E_x  = y[i_x]
-    E_y  = y[i_y]
-    E_x2 = y[i_x2]
-    E_y2 = y[i_y2]
-
-    # compute statistics
-    var_x = E_x2 - E_x**2
-    var_y = E_y2 - E_y**2
-
-    # undefined for zero mean
-    if E_x == 0:
-        fano_1 = None
-    else:
-        fano_1 = var_x / E_x
-    if E_y == 0:
-        fano_2 = None
-    else:
-        fano_2 = var_y / E_y
-
-    return float(fano_1), float(fano_2)
