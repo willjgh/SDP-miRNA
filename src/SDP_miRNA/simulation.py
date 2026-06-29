@@ -14,6 +14,7 @@ import scipy
 import matplotlib.pyplot as plt
 import pandas as pd
 import tqdm
+import math
 
 # ------------------------------------------------
 # Gillespie simulation functions
@@ -47,7 +48,10 @@ def gillespie(stoch_inp, stoch_out, rates, initial, tmax):
     stoch = stoch.astype(np.int64)
     stoch_inp = stoch_inp.astype(np.int64)
 
-    # simulate for burn in and intervals between samples
+    # initialize random generator
+    rng = np.random.default_rng()
+
+    # simulate until end time
     while t < tmax:
 
         # compute reaction propensities ----------------------------------------
