@@ -14,7 +14,7 @@ import numpy as np
 # Correlation function
 # ------------------------------------------------
 
-def compute_correlations(dataset, confidence=0.95, resamples=1000, query_chunk_size=100, bootstrap_chunk_size=100, tqdm_disable=False):
+def compute_correlations(dataset, method="OB", confidence=0.95, resamples=1000, query_chunk_size=100, bootstrap_chunk_size=100, tqdm_disable=False):
     '''
     Compute point estimate and bootstrap percentile confidence intervals on
     OB & AL correlation coefficients for each gene query in dataset
@@ -28,14 +28,15 @@ def compute_correlations(dataset, confidence=0.95, resamples=1000, query_chunk_s
         tqdm_disable: bool to hide progress bar
 
     Returns
-        correlations: (_, 3) array of point & interval estimates
+        correlations_OB: (_, 3) array of OB point & interval estimates
+        correlations_OG: (_, 3) array of OG point & interval estimates
     '''
 
     # helpful values
     sparse_A = dataset.sparse_A
     sparse_B = dataset.sparse_B
-    queries_A_list = [query[0] for query in self.gene_queries]
-    queries_B_list = [query[1] for query in self.gene_queries]
+    queries_A_list = [query[0] for query in dataset.gene_queries]
+    queries_B_list = [query[1] for query in dataset.gene_queries]
     beta = dataset.beta
     S_A = len(queries_A_list[0])
     S_B = len(queries_B_list[0])
@@ -68,7 +69,8 @@ def compute_correlations(dataset, confidence=0.95, resamples=1000, query_chunk_s
     boot_indices = rng.integers(0, N, size=(N, resamples))
     
     # Store final correlations: (point, CI lb, CI ub)
-    correlation_results = np.zeros((dataset.total_gene_queries, 3), dtype=np.float64)
+    correlation_OB_results = np.zeros((dataset.total_gene_queries, 3), dtype=np.float64)
+    correlation_OG_results = np.zeros((dataset.total_gene_queries, 3), dtype=np.float64)
     
     # Loop over chunks of gene queries for memory safety
     for q_start in tqdm.tqdm(range(0, dataset.total_gene_queries, query_chunk_size), disable=tqdm_disable):
@@ -94,6 +96,17 @@ def compute_correlations(dataset, confidence=0.95, resamples=1000, query_chunk_s
         
         E_x_OB, E_y_OB = orig_OB[:, 0], orig_OB[:, 1]
         E_x2_OB, E_y2_OB, E_xy_OB = orig_OB[:, 2], orig_OB[:, 3], orig_OB[:, 4]
+
+        varx_OB = E_x2_OB - E_x_OB**2
+        vary_OB = E_y2_OB - E_y_OB**2
+
+        # Compute correlation OB point estimate
+        valid_mask = (varx_OB > 0.0) & (vary_OB > 0.0)
+        point_corrs = np.full(curr_q_len, np.nan)
+        point_corrs[valid_mask] = (E_xy_OB[valid_mask] - E_x_OB[valid_mask]*E_y_OB[valid_mask]) / (
+            np.sqrt(varx_OB[valid_mask]) * np.sqrt(vary_OB[valid_mask])
+        )
+        correlation_OB_results[q_start:q_end, 0] = point_corrs
         
         # Convert OB to OG moments
         E_xy_OG = E_xy_OB / E_beta2
@@ -101,14 +114,14 @@ def compute_correlations(dataset, confidence=0.95, resamples=1000, query_chunk_s
         E_y_OG  = E_y_OB / E_beta
         varx_OG = ((1 / E_beta2)*E_x2_OB + (1 / E_beta)*E_x_OB - (1 / E_beta2)*E_x_OB) - E_x_OG**2
         vary_OG = ((1 / E_beta2)*E_y2_OB + (1 / E_beta)*E_y_OB - (1 / E_beta2)*E_y_OB) - E_y_OG**2
-        
-        # Compute correlation point estimate
+
+        # Compute correlation OG point estimate
         valid_mask = (varx_OG > 0.0) & (vary_OG > 0.0)
         point_corrs = np.full(curr_q_len, np.nan)
         point_corrs[valid_mask] = (E_xy_OG[valid_mask] - E_x_OG[valid_mask]*E_y_OG[valid_mask]) / (
             np.sqrt(varx_OG[valid_mask]) * np.sqrt(vary_OG[valid_mask])
         )
-        correlation_results[q_start:q_end, 0] = point_corrs
+        correlation_OG_results[q_start:q_end, 0] = point_corrs
         
         # Bootstrap moments for query chunk: (curr_q_len * 5, resamples)
         local_boot_flat = np.zeros((curr_q_len * 5, resamples), dtype=np.float64)
@@ -134,6 +147,24 @@ def compute_correlations(dataset, confidence=0.95, resamples=1000, query_chunk_s
         
         E_x_OB_b, E_y_OB_b = boot_moments[:, 0, :], boot_moments[:, 1, :]
         E_x2_OB_b, E_y2_OB_b, E_xy_OB_b = boot_moments[:, 2, :], boot_moments[:, 3, :], boot_moments[:, 4, :]
+
+        varx_OB_b = E_x2_OB_b - E_x_OB_b**2
+        vary_OB_b = E_y2_OB_b - E_y_OB_b**2
+
+        # Vectorized calculation of all bootstrap correlation estimates
+        boot_estimates = np.full((curr_q_len, resamples), np.nan)
+        boot_mask = (varx_OB_b > 0.0) & (vary_OB_b > 0.0)
+        
+        boot_estimates[boot_mask] = (E_xy_OB_b[boot_mask] - E_x_OB_b[boot_mask]*E_y_OB_b[boot_mask]) / (
+            np.sqrt(varx_OB_b[boot_mask]) * np.sqrt(vary_OB_b[boot_mask])
+        )
+        
+        # Compute confidence intervals for query chunk: can then discard large matrices of this query
+        chunk_lb, chunk_ub = np.nanquantile(boot_estimates, [(alpha / 2), 1 - (alpha / 2)], axis=1)
+        
+        # Store intervals
+        correlation_OB_results[q_start:q_end, 1] = chunk_lb
+        correlation_OB_results[q_start:q_end, 2] = chunk_ub
         
         # Convert OB to OG moments
         E_xy_OG_b = E_xy_OB_b / E_beta2
@@ -154,7 +185,7 @@ def compute_correlations(dataset, confidence=0.95, resamples=1000, query_chunk_s
         chunk_lb, chunk_ub = np.nanquantile(boot_estimates, [(alpha / 2), 1 - (alpha / 2)], axis=1)
         
         # Store intervals
-        correlation_results[q_start:q_end, 1] = chunk_lb
-        correlation_results[q_start:q_end, 2] = chunk_ub
+        correlation_OG_results[q_start:q_end, 1] = chunk_lb
+        correlation_OG_results[q_start:q_end, 2] = chunk_ub
         
-    return correlation_results
+    return correlation_OB_results, correlation_OG_results
