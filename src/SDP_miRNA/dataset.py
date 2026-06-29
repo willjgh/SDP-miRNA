@@ -44,7 +44,7 @@ class Dataset():
         # moment bounds
         self.moment_bounds = None
     
-    def construct_dataset(self, adata_A, adata_B, beta, gene_queries=None):
+    def construct_dataset_adata(self, adata_A, adata_B, beta, gene_queries=None):
         '''Setup object given data.'''
 
         # store objects
@@ -59,6 +59,23 @@ class Dataset():
 
         # size
         self.cells = adata_A.n_obs
+        self.total_gene_queries = len(self.gene_queries)
+
+    def construct_dataset_array(self, array_A, array_B, beta, gene_queries=None):
+        '''Setup object given data.'''
+
+        # store objects
+        self.sparse_A = scipy.sparse.csr_matrix(array_A)
+        self.sparse_B = scipy.sparse.csr_matrix(array_B)
+        self.beta = beta
+
+        # default selection of 1st A gene paired with all B genes
+        if gene_queries is None:
+            gene_queries = [[[0], [i]] for i in range(array_B.shape[1])]
+        self.gene_queries = gene_queries
+
+        # size
+        self.cells = array_A.shape[0]
         self.total_gene_queries = len(self.gene_queries)
 
     def bootstrap(self, d, confidence=0.95, resamples=1000, query_chunk_size=100, bootstrap_chunk_size=100, tqdm_disable=False):
