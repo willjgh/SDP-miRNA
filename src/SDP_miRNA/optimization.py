@@ -68,6 +68,7 @@ class Optimization():
         cut_limit=100,
         K=np.inf,
         custom_constraint=None,
+        objective_function=None,
         save_model=False,
         load_model=False,
         silent=True,
@@ -113,6 +114,7 @@ class Optimization():
         self.cut_limit = cut_limit
         self.K = K
         self.custom_constraint = custom_constraint
+        self.objective_function = objective_function
 
         # file settings
         self.save_model = save_model
@@ -243,7 +245,7 @@ class Optimization():
 
                 # additional constraints
                 if self.custom_constraint:
-                    model, variables = self.custom_constraints(self, model, variables)
+                    model, variables = self.custom_constraint(self, model, variables)
 
                 # set objective
                 if self.objective_function:
@@ -375,7 +377,7 @@ class Optimization():
         '''Compute dataset fano factor from analysis results.'''
 
         # store
-        fano_list = {}
+        fano_list = []
         
         # loop over gene queries of dataset
         for i in tqdm.tqdm(range(self.dataset.total_gene_queries), disable=self.tqdm_disable):
