@@ -15,7 +15,7 @@ import numpy as np
 import gurobipy as gp
 from gurobipy import GRB
 import traceback
-from time import time
+import time
 
 # ------------------------------------------------
 # Constants
@@ -129,6 +129,7 @@ class Optimization():
         self.result_dict          = {}
         self.eigenvalues_dict     = {}
         self.optim_times_dict     = {}
+        self.cut_times_dict       = {}
         self.feasible_values_dict = {}
 
     def analyse_dataset(self):
@@ -140,12 +141,13 @@ class Optimization():
             try:
 
                 # test feasibility of sample i
-                solution, eigenvalues, optim_times, feasible_values = self.feasibility_test(i)
+                solution, eigenvalues, optim_times, cut_times, feasible_values = self.feasibility_test(i)
 
                 # store results
                 self.result_dict[i]          = solution
                 self.eigenvalues_dict[i]     = eigenvalues
                 self.optim_times_dict[i]     = optim_times
+                self.cut_times_dict[i]       = cut_times
                 self.feasible_values_dict[i] = feasible_values
 
             # if exception
@@ -161,9 +163,10 @@ class Optimization():
                     'time': None,
                     'cuts': None
                 }
-                self.eigenvalues_dict[i] = None
-                self.optim_times_dict[i] = None
-                self.optim_times_dict[i] = None
+                self.eigenvalues_dict[i]     = None
+                self.optim_times_dict[i]     = None
+                self.cut_times_dict[i]       = None
+                self.feasible_values_dict[i] = None
 
     def feasibility_test(self, i):
         '''
@@ -190,6 +193,7 @@ class Optimization():
         # store information from each cut algorithm iteration
         eigenvalues = []
         optim_times = []
+        cut_times = []
         feasible_values = []
 
         # get moment bounds for gene query i
@@ -272,16 +276,19 @@ class Optimization():
                     if self.save_model:
                         model.write(self.save_model)
 
-                    return solution, eigenvalues, optim_times, feasible_values
+                    return solution, eigenvalues, optim_times, cut_times, feasible_values
 
                 # while below time and cut limit
                 while (solution['cuts'] < self.cut_limit) and (solution['time'] < self.total_time_limit):
 
                     # check semidefinite feasibility & add cuts if needed
+                    s = time.time()
                     model, semidefinite_feas, evals_data = optimization_utils.semidefinite_cut(self, model, variables)
+                    t = time.time() - s
 
-                    # store eigenvalue & optim time data
+                    # store eigenvalue & time data
                     eigenvalues.append(evals_data)
+                    cut_times.append(t)
 
                     # semidefinite feasible: return
                     if semidefinite_feas:
@@ -290,13 +297,13 @@ class Optimization():
                         if self.save_model:
                             model.write(self.save_model)
 
-                        return solution, eigenvalues, optim_times, feasible_values
+                        return solution, eigenvalues, optim_times, cut_times, feasible_values
                     
                     # record cut
                     solution['cuts'] += 1
                     
                     # semidefinite infeasible: check NLP feasibility with added cut
-                    model, status, var_dict = optimization_utils.optimize(model, obj    )
+                    model, status, var_dict = optimization_utils.optimize(model, obj)
 
                     # update optimization time
                     solution['time'] += model.Runtime
@@ -316,7 +323,7 @@ class Optimization():
                         if self.save_model:
                             model.write(self.save_model)
 
-                        return solution, eigenvalues, optim_times, feasible_values
+                        return solution, eigenvalues, optim_times, cut_times, feasible_values
 
                 # set custom status
                 if solution['cuts'] >= self.cut_limit:
@@ -338,7 +345,7 @@ class Optimization():
                 if self.save_model:
                     model.write(self.save_model)
 
-                return solution, eigenvalues, optim_times, feasible_values
+                return solution, eigenvalues, optim_times, cut_times, feasible_values
 
     def compute_dataset_correlation(self, Sx=0, Sy=1):
         '''Compute dataset correlations from analysis results.'''
