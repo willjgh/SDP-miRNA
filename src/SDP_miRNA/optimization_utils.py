@@ -38,7 +38,7 @@ status_codes = {
 
 def compute_A(alpha, reactions, vrs, db, R, S, d):
     '''
-    Moment equation coefficient matrSx
+    Moment equation coefficient matrix
     NOTE: must have order of alpha <= d
 
     Args:
@@ -51,7 +51,7 @@ def compute_A(alpha, reactions, vrs, db, R, S, d):
         d: maximum moment order used (must be >= order(alpha) + db - 1)
 
     Returns:
-        A: (R, Nd) matrSx of coefficients
+        A: (R, Nd) matrix of coefficients
     '''
 
     if utils.compute_order(alpha) > d - db + 1:
@@ -69,7 +69,7 @@ def compute_A(alpha, reactions, vrs, db, R, S, d):
     # get powers of order <= d
     powers = utils.compute_powers(S, d)
 
-    # setup matrSx
+    # setup matrix
     A = np.zeros((R, Nd))
 
     for r, prop in enumerate(props):
@@ -85,7 +85,7 @@ def compute_A(alpha, reactions, vrs, db, R, S, d):
         # loop over terms
         for xs_power, coeff in zip(poly.monoms(), poly.coeffs()):
 
-            # get matrSx index
+            # get matrix index
             col = powers.index(list(xs_power))
 
             # store
@@ -95,7 +95,7 @@ def compute_A(alpha, reactions, vrs, db, R, S, d):
 
 def compute_B(beta, S, U, d):
     '''
-    Capture efficiency moment scaling matrSx
+    Capture efficiency moment scaling matrix
 
     Args:
         beta: per cell capture efficiency sample
@@ -104,7 +104,7 @@ def compute_B(beta, S, U, d):
         d: maximum moment order used
 
     Returns:
-        B: (Nd, Nd) matrSx of coefficients
+        B: (Nd, Nd) matrix of coefficients
     '''
 
     # number of moments of order <= d
@@ -118,7 +118,7 @@ def compute_B(beta, S, U, d):
     for l in range(d + 1):
         y_beta[l] = np.mean(beta**l)
 
-    # setup matrSx
+    # setup matrix
     B = np.zeros((Nd, Nd))
 
     p = sp.Symbol('p')
@@ -149,7 +149,7 @@ def compute_B(beta, S, U, d):
         # loop over terms
         for (beta_power, *xs_power), coeff in zip(poly_alpha.monoms(), poly_alpha.coeffs()):
 
-            # get matrSx index
+            # get matrix index
             col = powers.index(xs_power)
 
             B[row, col] += coeff * y_beta[beta_power]
@@ -157,7 +157,7 @@ def compute_B(beta, S, U, d):
     return B
 
 def construct_M_s(y, s, S, d):
-    '''Moment matrSx variable constructor (s).'''
+    '''Moment matrix variable constructor (s).'''
     if s == 0:
         D = math.floor(d / 2)
     else:
@@ -201,7 +201,7 @@ def base_model(opt, model, OB_bounds):
             d_bd: _ for moment bounds
             d_me: _ for moment equations
             d_sd: _ for semidefinite constraints
-        fSxed: list of pairs of (reaction index r, value to fSx k_r to)
+        fixed: list of pairs of (reaction index r, value to fix k_r to)
         time_limit: optimization time limit
 
         constraint options
@@ -218,6 +218,8 @@ def base_model(opt, model, OB_bounds):
         variables: dict for model variable reference
     '''
 
+    ts = time.time()
+
     # model settings
     model.Params.TimeLimit = opt.time_limit
 
@@ -228,7 +230,10 @@ def base_model(opt, model, OB_bounds):
 
     # variables
     y = model.addMVar(shape=Nd, vtype=GRB.CONTINUOUS, name="y", lb=0)
-    k = model.addMVar(shape=opt.R, vtype=GRB.CONTINUOUS, name="k", lb=0, ub=opt.K)
+    if opt.K is None:
+        k = model.addMVar(shape=opt.R, vtype=GRB.CONTINUOUS, name="k", lb=0)
+    else:
+        k = model.addMVar(shape=opt.R, vtype=GRB.CONTINUOUS, name="k", lb=0, ub=opt.K)
 
     # variable dict
     variables = {
@@ -236,8 +241,12 @@ def base_model(opt, model, OB_bounds):
         'k': k
     }
 
+    if opt.print_times: print(f"Variables: {time.time() - ts}")
+
     # moment matrices
     if opt.constraints.moment_matrices:
+
+        ts = time.time()
 
         # for each species
         for s in range(opt.S + 1):
@@ -245,25 +254,50 @@ def base_model(opt, model, OB_bounds):
             # up to order d_sd
             M_s = construct_M_s(y, s, opt.S, opt.d_sd)
             variables[f'M_{s}'] = M_s
+
+        if opt.print_times: print(f"Moment Matrices {time.time() - ts}")
     
     # moment bounds
     if opt.constraints.moment_bounds:
 
+        ts = time.time()
+        to = 0
+        tc = 0
+        ta = 0
+
+        so = time.time()
+
         # only explicitly bound observed, leave unobserved unbounded
         # avoids issues with e+100 upper bounds on unobserved moments
 
-        # B scaling matrSx
+        so1 = time.time()
+
+        # B scaling matrix
         B = compute_B(opt.dataset.beta, opt.S, opt.U, opt.d)
+
+        to1 = time.time() - so1
+
+        so2 = time.time()
 
         # downsampled moments
         y_D = B @ y
+
+        to2 = time.time() - so2
+
+        so3 = time.time()
 
         # powers up to order d_bd for all species & observed species
         powers_S = utils.compute_powers(opt.S, opt.d_bd)
         powers_SO = utils.compute_powers(SO, opt.d_bd)
 
+        to3 = time.time() - so3
+
+        to = time.time() - so
+
         # for all species powers
         for i, alpha_S in enumerate(powers_S):
+
+            sc = time.time()
 
             # skip if contains unobserved species (non-zero power)
             unobserved = False
@@ -278,22 +312,54 @@ def base_model(opt, model, OB_bounds):
             # find corresponding index of observed species power
             alpha_SO = [alpha_S[i] for i in O]
             j = powers_SO.index(alpha_SO)
+
+            tc += time.time() - sc
+
+            sa = time.time()
     
             # bound
             model.addConstr(y_D[i] <= OB_bounds[1, j], name=f"y_{i}_UB")
             model.addConstr(y_D[i] >= OB_bounds[0, j], name=f"y_{i}_LB")
 
+            ta += time.time() - sa
+
+        if opt.print_times:
+
+            print(f"Moment Bounds {time.time() - ts}")
+            print(f"    Overhead: {to} ({to1}, {to2}, {to3})")
+            print(f"    Code: {tc}")
+            print(f"    Adding: {ta}")
+
     # moment equations
     if opt.constraints.moment_equations:
+
+        ts = time.time()
+        tc = 0
+        ta = 0
 
         # moment equations of order up to d_me - db + 1
         # means d_me highest order moment invovled
         moment_powers = utils.compute_powers(opt.S, opt.d_me - opt.db + 1)
         for alpha in moment_powers:
 
+            sc = time.time()
+
             # compute A as R x N_d, so no need to subset to d_me for product
             A_alpha_d = compute_A(alpha, opt.reactions, opt.vrs, opt.db, opt.R, opt.S, opt.d)
+
+            tc += time.time() - sc
+
+            sa = time.time()
+
             model.addConstr(k.T @ A_alpha_d @ y == 0, name=f"ME_{alpha}_{opt.d}")
+
+            ta += time.time() - sa
+
+        if opt.print_times:
+
+            print(f"Moment Equations {time.time() - ts}")
+            print(f"    Code: {tc}")
+            print(f"    Adding: {ta}")
 
     # moment factorization: currently only for S = 2
     if opt.constraints.factorization:
@@ -340,12 +406,12 @@ def base_model(opt, model, OB_bounds):
                     l = powers.index(alpha_reduced)
                     model.addConstr(y[i] <= y[l], name="U_ineq")
 
-    # fSxed moment
+    # fixed moment
     model.addConstr(y[0] == 1, name="y0_base")
 
     # rate parameter constraints
     for r, val in opt.rate_fixed:
-        model.addConstr(k[r] == val, name=f"k{r}_fSxed")
+        model.addConstr(k[r] == val, name=f"k{r}_fixed")
     for r, val in opt.rate_lower:
         model.addConstr(k[r] >= val, name=f"k{r}_lower")
     for r, val in opt.rate_upper:
@@ -385,7 +451,7 @@ def semidefinite_cut(opt, model, variables):
     Args:
         model: optimized NLP model
         variables: model variable reference dict
-        print_evals: option to display moment matrSx eigenvalues (semidefinite condition)
+        print_evals: option to display moment matrix eigenvalues (semidefinite condition)
 
     Returns:
         model: model with any cutting planes added
@@ -395,7 +461,7 @@ def semidefinite_cut(opt, model, variables):
     # data list
     data = []
 
-    # moment matrSx values
+    # moment matrix values
     for s in range(opt.S + 1):
         data.append(
             {f'M_val': variables[f'M_{s}'].X}
@@ -434,7 +500,7 @@ def semidefinite_cut(opt, model, variables):
 
         if opt.printing: print("SDP infeasible\n")
 
-        # for each matrSx
+        # for each matrix
         for s in range(opt.S + 1):
 
             # for each M_s eigenvalue
@@ -464,7 +530,7 @@ def compute_feasible_correlation(opt, var_dict, Sx, Sy, MOSEK=False):
     '''Compute correlation value given feasible moment vector.'''
 
     def ei(*idxs, val=1):
-        '''Sxze S array with val in each index of idxs and 0 elsewhere.'''
+        '''Size S array with val in each index of idxs and 0 elsewhere.'''
         power = np.zeros(opt.S)
         for i in idxs:
             power[i] = val
@@ -510,7 +576,7 @@ def compute_feasible_fano_factor(opt, var_dict, Sx, MOSEK=False):
     '''Compute correlation value given feasible moment vector.'''
 
     def ei(*idxs, val=1):
-        '''Sxze S array with val in each index of idxs and 0 elsewhere.'''
+        '''Size S array with val in each index of idxs and 0 elsewhere.'''
         power = np.zeros(opt.S)
         for i in idxs:
             power[i] = val
@@ -546,7 +612,7 @@ def compute_feasible_fano_factor(opt, var_dict, Sx, MOSEK=False):
 # ------------------------------------------------
 
 def MOSEK_construct_M_s(y, s, S, d):
-    '''Moment matrSx variable constructor (s).'''
+    '''Moment matrix variable constructor (s).'''
     if s == 0:
         D = math.floor(d / 2)
     else:
@@ -565,7 +631,7 @@ def MOSEK_construct_M_s(y, s, S, d):
     return M_s
 
 def compute_M_s_value(y, s, S, d):
-    '''Moment matrSx value (s).'''
+    '''Moment matrix value (s).'''
     if s == 0:
         D = math.floor(d / 2)
     else:
