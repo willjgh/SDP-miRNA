@@ -8,6 +8,7 @@ Module implementing classes to handle optimization inference method.
 
 from SDP_miRNA import optimization_utils
 from SDP_miRNA import utils
+from SDP_miRNA import fast_model_constructor
 from SDP_miRNA.constraints import Constraint
 import json
 import tqdm
@@ -66,7 +67,7 @@ class Optimization():
         total_time_limit=300,
         eval_eps=10**-6,
         cut_limit=100,
-        K=np.inf,
+        K=None,
         custom_constraint=None,
         objective_function=None,
         save_model=False,
@@ -131,6 +132,13 @@ class Optimization():
         self.optim_times_dict     = {}
         self.cut_times_dict       = {}
         self.feasible_values_dict = {}
+
+        # diagnostics
+        self.print_times = False
+        self.construction_time = None
+
+        # optimized version
+        self.optimized_construction = False
 
     def analyse_dataset(self):
         '''Analyse given dataset using method settings and store results.'''
@@ -245,7 +253,12 @@ class Optimization():
 
                 # otherwise: construct base model
                 else:
-                    model, variables = optimization_utils.base_model(self, model, OB_bounds)
+                    s = time.time()
+                    if self.optimized_construction:
+                        model, variables = fast_model_constructor.base_model(self, model, OB_bounds)
+                    else:
+                        model, variables = optimization_utils.base_model(self, model, OB_bounds)
+                    self.construction_time = time.time() - s
 
                 # additional constraints
                 if self.custom_constraint:
