@@ -27,7 +27,7 @@ dependencies = [
     "sympy",
     "matplotlib",
     "gurobipy>=12.0.1",
-    "mosek"==11.2.2,
+    "mosek==11.2.2",
     "pandas",
     "tqdm",
     "seaborn",
